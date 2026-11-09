@@ -36,11 +36,21 @@ Keep the ball bouncing with your paddle. One life. No second chances.
 
 ## Download
 
-Every push to `main` builds the APKs in **GitHub Actions** (tab *Actions* → latest run → *Artifacts*).
-Tagged versions (`v1.0.0`, …) are published on the **Releases** page:
+Every push to `main` builds the APKs in **GitHub Actions** and puts them on the
+[`apk-builds`](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/tree/apk-builds) branch:
 
-- `BurhanNexus-BallBounce-v1.0.0-release.apk` – install this one.
-- `BurhanNexus-BallBounce-v1.0.0-debug.apk` – testing build, installs side by side as “Ball Bounce (Debug)”.
+- [BurhanNexus-BallBounce-v1.0.0-release.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.0.0-release.apk) – install this one.
+- [BurhanNexus-BallBounce-v1.0.0-debug.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.0.0-debug.apk) – testing build, installs side by side as “Ball Bounce (Debug)”.
+
+Publishing a GitHub Release (e.g. tag `v1.0.0`) also attaches both APKs to the release automatically.
+
+## Automated checks
+
+- **Unit tests** (18): physics, paddle angles, no tunnelling at max speed, difficulty steps and cap,
+  one-life game over, fresh NEW GAME, TOP 3 sorting/ties/persistence.
+- **Emulator UI check** on Android 10 and Android 15: opens every screen, plays, forces a miss,
+  restarts the app to confirm saved scores, taps PLAY and EXIT GAME with real touches, fails on any crash.
+  Screenshots are pushed to the `ci-screenshots-api29` / `ci-screenshots-api35` branches.
 
 ## Release signing (one-time setup)
 

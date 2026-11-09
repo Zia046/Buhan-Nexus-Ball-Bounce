@@ -84,6 +84,8 @@ class GameView(
     private var hitFlash = 0f
 
     private var pressed: UiButton? = null
+    private var autopilot = false   // debug builds only (CI screenshots)
+    private var forceMiss = false   // debug builds only
     private var activePointer = -1
 
     // ---------------------------------------------------------------- layout
@@ -476,6 +478,8 @@ class GameView(
             resumeCountdown -= dt
             return
         }
+        if (autopilot) world.movePaddleTo(world.ballX + sin(time * 0.9f) * world.paddleW * 0.3f, immediate = true)
+        if (forceMiss) world.movePaddleTo(if (world.ballX < w / 2f) w else 0f, immediate = true)
         val events = world.update(dt)
         for (e in events) {
             when (e.type) {
@@ -548,8 +552,30 @@ class GameView(
         toastT = 0f
         lastResult = null
         confettiLeft = 0f
+        autopilot = false
+        forceMiss = false
         screen = Screen.PLAYING
         keepScreenOn = true
+    }
+
+    /** Debug-build hook used by the CI emulator test (never called in release builds). */
+    fun debugCommand(cmd: String) {
+        when (cmd) {
+            "menu" -> goToMenu()
+            "howto" -> screen = Screen.HOW_TO
+            "top3" -> screen = Screen.LEADERBOARD
+            "about" -> screen = Screen.ABOUT
+            "autoplay" -> { startNewGame(); world.start(); autopilot = true }
+            "pause" -> if (screen == Screen.PLAYING && world.started) screen = Screen.PAUSED
+            "miss" -> {
+                if (screen == Screen.PAUSED) { screen = Screen.PLAYING; resumeCountdown = 0f }
+                autopilot = false; forceMiss = true
+            }
+            "dump" -> for (s in Screen.values()) for (b in buttonsFor(s)) {
+                android.util.Log.i("BNUI", "$s ${b.action} ${b.rect.centerX().toInt()} ${b.rect.centerY().toInt()}")
+            }
+        }
+        invalidate()
     }
 
     private fun onGameOver() {

@@ -30,6 +30,21 @@ class MainActivity : Activity() {
             }
         }
         hideSystemBars()
+        handleDebugCommand(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDebugCommand(intent)
+    }
+
+    /** Debug builds only: lets the automated emulator test jump between screens. */
+    private fun handleDebugCommand(i: Intent?) {
+        if (!BuildConfig.DEBUG || i == null) return
+        val cmd = i.getStringExtra("bn_cmd") ?: return
+        i.removeExtra("bn_cmd")
+        gameView.postDelayed({ gameView.debugCommand(cmd) }, 300)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

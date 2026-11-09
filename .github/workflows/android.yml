@@ -38,7 +38,17 @@ jobs:
           fi
 
       - name: Unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
+        run: |
+          ./gradlew --no-daemon testDebugUnitTest
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          t = f = 0
+          for x in glob.glob('app/build/test-results/testDebugUnitTest/*.xml'):
+              r = ET.parse(x).getroot()
+              t += int(r.get('tests')); f += int(r.get('failures')) + int(r.get('errors'))
+              print(r.get('name'), r.get('tests'), 'tests')
+          print(f'UNIT TESTS: {t} run, {f} failed')
+          PY
 
       - name: Build debug + release APK
         env:

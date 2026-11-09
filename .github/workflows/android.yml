@@ -1,0 +1,90 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare release signing key
+        env:
+          BN_SIGNING_PASSWORD: ${{ secrets.BN_SIGNING_PASSWORD }}
+        run: |
+          if [ -n "$BN_SIGNING_PASSWORD" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in signing/release.jks.enc \
+              -out "$RUNNER_TEMP/release.jks" -pass env:BN_SIGNING_PASSWORD
+            echo "BN_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Release key ready."
+          else
+            echo "::warning::BN_SIGNING_PASSWORD secret not set - release APK is signed with a temporary debug key."
+          fi
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build debug + release APK
+        env:
+          BN_KEYSTORE_PASSWORD: ${{ secrets.BN_SIGNING_PASSWORD }}
+          BN_KEY_PASSWORD: ${{ secrets.BN_SIGNING_PASSWORD }}
+          BN_KEY_ALIAS: burhannexus
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+
+      - name: Rename and verify APKs
+        run: |
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/BurhanNexus-BallBounce-v${VERSION}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/BurhanNexus-BallBounce-v${VERSION}-debug.apk"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          for f in dist/*.apk; do
+            echo "== $f"
+            "$APKSIGNER" verify --print-certs "$f" | head -4
+          done
+          ls -la dist
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: BurhanNexus-BallBounce-v${{ env.VERSION }}
+          path: dist/*.apk
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Ball Bounce ${{ github.ref_name }}
+          files: dist/*.apk
+          body: |
+            BURHAN NEXUS - BALL BOUNCE ${{ github.ref_name }}
+
+            * `...-release.apk` - install this one on your phone (signed release build).
+            * `...-debug.apk` - testing build, installs side by side as "Ball Bounce (Debug)".
+
+            Android 8.0+ (tested target: Android 10 and newer). Works fully offline, no permissions.

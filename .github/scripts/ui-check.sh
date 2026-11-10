@@ -8,6 +8,9 @@ ACT=$PKG/com.burhannexus.ballbounce.MainActivity
 OUT=${OUT:-shots}
 mkdir -p "$OUT"
 
+# keep emulator system popups out of the screenshots
+adb shell settings put secure immersive_mode_confirmations confirmed || true
+adb shell settings put global hide_error_dialogs 1 || true
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb logcat -c
 adb shell wm size > "$OUT/screen-size.txt"

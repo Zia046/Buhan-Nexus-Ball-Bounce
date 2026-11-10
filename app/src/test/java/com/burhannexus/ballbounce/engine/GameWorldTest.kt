@@ -190,8 +190,8 @@ class GameWorldTest {
     @Test
     fun paddleFollowsFingerInstantly() {
         val w = world()
-        w.movePaddleTo(w.width * 0.9f)
-        assertEquals(w.width * 0.9f, w.paddleX, 0.01f)       // same frame, no lag
+        w.movePaddleTo(w.width * 0.8f)
+        assertEquals(w.width * 0.8f, w.paddleX, 0.01f)       // same frame, no lag
         w.movePaddleTo(0f)
         assertEquals(w.paddleW / 2f, w.paddleX, 0.01f)       // clamped to the left edge
         w.movePaddleTo(w.width * 5f)

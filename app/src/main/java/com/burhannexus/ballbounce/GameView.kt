@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Matrix
+import android.graphics.Path
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
@@ -43,7 +44,7 @@ class GameView(
 ) : View(activity) {
 
     enum class Screen { MENU, HOW_TO, LEADERBOARD, ABOUT, PLAYING, PAUSED, GAME_OVER }
-    enum class Action { PLAY, TOP3, HOW_TO, ABOUT, SOUND, BACK, RESUME, MAIN_MENU, NEW_GAME, EXIT, EMAIL, PHONE, PAUSE }
+    enum class Action { PLAY, TOP3, HOW_TO, ABOUT, SOUND, BACK, RESUME, MAIN_MENU, NEW_GAME, EXIT, PAUSE }
     enum class Style { PRIMARY, SECONDARY, DANGER, LINK, ICON }
 
     class UiButton(val action: Action, var label: String, val style: Style, var sub: String = "") {
@@ -80,12 +81,22 @@ class GameView(
     private var scorePop = 0f
     private var toastText = ""
     private var toastT = 0f
+    private var toastSub = ""
+    private var bonusMsgT = 0f
+    private var livesPop = 0f
+    private var lifeFlash = 0f
+    private var howScroll = 0f
+    private var howVel = 0f
+    private var howDragging = false
+    private var lastTouchY = 0f
+    private var howContentH = 0f
     private var lastWallSound = 0f
     private var hitFlash = 0f
 
     private var pressed: UiButton? = null
     private var autopilot = false   // debug builds only (CI screenshots)
     private var forceMiss = false   // debug builds only
+    private var missOnce = false    // debug builds only
     private var activePointer = -1
 
     // ---------------------------------------------------------------- layout
@@ -123,6 +134,26 @@ class GameView(
     private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val dimPaint = Paint().apply { color = 0xB3030510.toInt() }
     private var paddleShader: LinearGradient? = null
+
+    /** Unit-size heart (about 2 x 1.9) centred on 0,0; drawn scaled. */
+    private val heartPath = Path().apply {
+        moveTo(0f, -0.45f)
+        cubicTo(-0.25f, -1.0f, -1.05f, -0.95f, -1.0f, -0.25f)
+        cubicTo(-0.95f, 0.25f, -0.35f, 0.55f, 0f, 0.95f)
+        cubicTo(0.35f, 0.55f, 0.95f, 0.25f, 1.0f, -0.25f)
+        cubicTo(1.05f, -0.95f, 0.25f, -1.0f, 0f, -0.45f)
+        close()
+    }
+    private val heartPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(-0.35f, -0.45f, 1.7f,
+            intArrayOf(0xFFFFD1E0.toInt(), 0xFFFF3D7F.toInt(), 0xFFA0103F.toInt()),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+    }
+    private val heartGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 1f,
+            intArrayOf(0x99FF3D7F.toInt(), 0x40FF3D7F, 0x00FF3D7F),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+    }
     private val paddleMatrix = Matrix()
     private val tmpRect = RectF()
 
@@ -154,9 +185,10 @@ class GameView(
     private val btnBackHow = UiButton(Action.BACK, "BACK", Style.SECONDARY)
     private val btnBackTop = UiButton(Action.BACK, "BACK", Style.SECONDARY)
     private val btnBackAbout = UiButton(Action.BACK, "BACK", Style.SECONDARY)
-    private val btnEmail = UiButton(Action.EMAIL, "EMAIL", Style.LINK, Brand.EMAIL)
-    private val btnPhone = UiButton(Action.PHONE, "MOBILE", Style.LINK, Brand.PHONE)
-    private val aboutButtons = listOf(btnEmail, btnPhone, btnBackAbout)
+    // Email and mobile are display-only (not clickable)
+    private val emailRow = RectF()
+    private val phoneRow = RectF()
+    private val aboutButtons = listOf(btnBackAbout)
 
     private val btnResume = UiButton(Action.RESUME, "RESUME", Style.PRIMARY)
     private val btnPauseMenu = UiButton(Action.MAIN_MENU, "MAIN MENU", Style.SECONDARY)
@@ -174,16 +206,28 @@ class GameView(
     private val logoRect = RectF()
     private val lbCards = arrayOf(RectF(), RectF(), RectF())
     private val howCard = RectF()
-    private var howLines: List<Pair<Int, List<String>>> = emptyList()
+    /** One laid-out line group of the How to Play content (y is relative to the content top). */
+    private class HowRow(val kind: Int, val label: String, val lines: List<String>, val y: Float)
+    private var howRows: List<HowRow> = emptyList()
     private var howTextSize = 1f
+    private val howDemo = RectF()   // relative to content top
 
-    private val howItems = listOf(
-        "Slide your finger left and right anywhere on the screen to move the paddle.",
-        "Keep the ball in the air. Every paddle hit = +1 point.",
-        "Hit with the paddle's edge for a sharp angle, or the centre for a straight bounce.",
-        "The ball gets faster the longer you survive and after every 10 hits. The paddle gets a little shorter too.",
-        "ONE LIFE ONLY: miss the ball once and the game is over. No continues, no second chances.",
-        "Beat your personal best and claim a place in the TOP 3!"
+    private val howBasics = listOf(
+        "Tap PLAY to start the game.",
+        "Move your finger or thumb left and right to control the paddle.",
+        "Keep the ball bouncing by hitting it with the paddle.",
+        "Every successful bounce increases your score by 1.",
+        "The ball becomes faster as time passes and your score increases.",
+        "Do not let the ball fall below the paddle."
+    )
+    private val howBonus = listOf(
+        "Every 10 successful bounces, a bonus life appears from the top of the screen.",
+        "The bonus life slowly falls toward the bottom.",
+        "Move your paddle underneath the falling bonus object to collect it.",
+        "Collecting it gives you one extra life.",
+        "If you miss the ball, one available life is consumed.",
+        "If you have an extra life, a new ball falls from the top and the game continues.",
+        "If you have no remaining lives, the game ends."
     )
 
     private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale.US)
@@ -361,24 +405,37 @@ class GameView(
 
     private fun layoutHowTo() {
         setButton(btnBackHow, bot - u * 9f, cw * 0.6f, u * 12.5f)
-        howCard.set(cx - cw / 2f, top + u * 24f, cx + cw / 2f, btnBackHow.rect.top - u * 6f)
-        val textLeftPad = u * 15f
-        val maxW = howCard.width() - textLeftPad - u * 5f
-        var size = u * 4.6f
-        while (true) {
-            textPaint.typeface = fontBody
-            textPaint.textSize = size
-            textPaint.letterSpacing = 0f
-            val lines = howItems.mapIndexed { i, s -> Pair(i + 1, wrap(s, textPaint, maxW)) }
-            val lineH = size * 1.32f
-            val total = lines.sumOf { it.second.size } * lineH + (lines.size - 1) * u * 3.5f + u * 10f
-            if (total <= howCard.height() || size < u * 2.6f) {
-                howLines = lines
-                howTextSize = size
-                break
-            }
-            size *= 0.94f
+        howCard.set(cx - cw / 2f, top + u * 24f, cx + cw / 2f, btnBackHow.rect.top - u * 5f)
+        val size = u * 4.3f
+        howTextSize = size
+        textPaint.typeface = fontBody
+        textPaint.textSize = size
+        textPaint.letterSpacing = 0f
+        val maxW = howCard.width() - u * 15f - u * 5f
+        val lineH = size * 1.32f
+        val rows = ArrayList<HowRow>()
+        // animated illustration first
+        howDemo.set(howCard.left + u * 5f, u * 5f, howCard.right - u * 5f, u * 5f + u * 40f)
+        var y = howDemo.bottom + u * 7f      // caption line
+        y += u * 9f
+        rows.add(HowRow(1, "HOW TO PLAY", emptyList(), y))
+        y += u * 7f + size
+        howBasics.forEachIndexed { i, t ->
+            val lines = wrap(t, textPaint, maxW)
+            rows.add(HowRow(0, (i + 1).toString(), lines, y))
+            y += lines.size * lineH + u * 2.6f
         }
+        y += u * 6f
+        rows.add(HowRow(1, "BONUS LIFE", emptyList(), y))
+        y += u * 7f + size
+        howBonus.forEach { t ->
+            val lines = wrap(t, textPaint, maxW)
+            rows.add(HowRow(2, "", lines, y))
+            y += lines.size * lineH + u * 2.6f
+        }
+        howRows = rows
+        howContentH = y + u * 3f
+        howScroll = clampHowScroll(howScroll)
     }
 
     private fun layoutLeaderboard() {
@@ -402,8 +459,8 @@ class GameView(
         val ly = top + u * 10f
         logoAboutRect.set(cx - lw / 2f, ly, cx + lw / 2f, ly + lh)
         val linkTop = logoAboutRect.bottom + u * 30f
-        setButton(btnEmail, linkTop + u * 8f, cw, u * 16f)
-        setButton(btnPhone, linkTop + u * 8f + u * 20f, cw, u * 16f)
+        emailRow.set(cx - cw / 2f, linkTop, cx + cw / 2f, linkTop + u * 16f)
+        phoneRow.set(cx - cw / 2f, linkTop + u * 20f, cx + cw / 2f, linkTop + u * 36f)
     }
 
     private val logoAboutRect = RectF()
@@ -440,6 +497,13 @@ class GameView(
         particles.update(dt, h * 0.9f)
         scorePop = max(0f, scorePop - dt * 4f)
         toastT = max(0f, toastT - dt)
+        bonusMsgT = max(0f, bonusMsgT - dt)
+        livesPop = max(0f, livesPop - dt * 3f)
+        lifeFlash = max(0f, lifeFlash - dt * 2.5f)
+        if (screen == Screen.HOW_TO && !howDragging && abs(howVel) > 1f) {
+            howScroll = clampHowScroll(howScroll + howVel * dt)
+            howVel *= (1f - min(1f, dt * 4f))
+        }
         hitFlash = max(0f, hitFlash - dt * 3f)
 
         when (screen) {
@@ -478,7 +542,12 @@ class GameView(
             resumeCountdown -= dt
             return
         }
-        if (autopilot) world.movePaddleTo(world.ballX + sin(time * 0.9f) * world.paddleW * 0.3f, immediate = true)
+        if (autopilot) {
+            // debug autopilot: catch a low bonus heart while the ball is rising, otherwise follow the ball
+            val heart = world.bonuses.maxByOrNull { it.y }
+            if (heart != null && world.ballVY < 0f && heart.y > world.ballY) world.movePaddleTo(heart.x, immediate = true)
+            else world.movePaddleTo(world.ballX + sin(time * 0.9f) * world.paddleW * 0.3f, immediate = true)
+        }
         if (forceMiss) world.movePaddleTo(if (world.ballX < w / 2f) w else 0f, immediate = true)
         val events = world.update(dt)
         for (e in events) {
@@ -498,15 +567,46 @@ class GameView(
                 }
                 EventType.LEVEL_UP -> {
                     toastText = "SPEED UP!  LEVEL ${world.level}"
+                    toastSub = ""
                     toastT = 1.6f
                 }
+                EventType.BONUS_SPAWNED -> {
+                    toastSub = "BONUS LIFE INCOMING \u2013 CATCH THE HEART!"
+                    if (toastT <= 0f) { toastText = ""; toastT = 1.6f }
+                    spawnSparks(e.x, e.y, 10, 0.4f)
+                }
+                EventType.BONUS_COLLECTED -> {
+                    sounds.play(SoundManager.Sfx.BONUS)
+                    bonusMsgT = 1.8f
+                    livesPop = 1f
+                    val colors = intArrayOf(cPink, cGold, cWhite)
+                    for (i in 0 until 30) {
+                        val a = (rnd.nextDouble() * Math.PI * 2).toFloat()
+                        val sp = (0.2f + rnd.nextFloat() * 0.8f) * h * 0.35f
+                        particles.spawn(e.x, e.y, cos(a) * sp, sin(a) * sp - h * 0.15f, 0.6f + rnd.nextFloat() * 0.4f,
+                            world.ballR * (0.2f + rnd.nextFloat() * 0.25f), colors[rnd.nextInt(colors.size)], 0.5f)
+                    }
+                }
+                EventType.BONUS_MISSED -> Unit
+                EventType.LIFE_LOST -> {
+                    if (missOnce) { missOnce = false; forceMiss = false; autopilot = true }
+                    sounds.play(SoundManager.Sfx.LIFE_LOST)
+                    lifeFlash = 1f
+                    trailCount = 0
+                    for (i in 0 until 20) {
+                        val a = (-Math.PI + rnd.nextDouble() * Math.PI).toFloat()
+                        val sp = rnd.nextFloat() * h * 0.45f
+                        particles.spawn(e.x, h - safeBottom, cos(a) * sp, sin(a) * sp, 0.7f, world.ballR * 0.3f, cPink, 0.8f)
+                    }
+                }
+                EventType.BALL_RELAUNCHED -> spawnSparks(world.ballX, world.ballY, 8, 0.3f)
                 EventType.GAME_OVER -> {
                     onGameOver()
                     return
                 }
             }
         }
-        if (world.started) pushTrail(world.ballX, world.ballY)
+        if (world.started && world.relaunchTimer <= 0f) pushTrail(world.ballX, world.ballY)
     }
 
     private fun pushTrail(x: Float, y: Float) {
@@ -550,6 +650,9 @@ class GameView(
         trailCount = 0
         resumeCountdown = 0f
         toastT = 0f
+        bonusMsgT = 0f
+        lifeFlash = 0f
+        livesPop = 0f
         lastResult = null
         confettiLeft = 0f
         autopilot = false
@@ -569,7 +672,19 @@ class GameView(
             "pause" -> if (screen == Screen.PLAYING && world.started) screen = Screen.PAUSED
             "miss" -> {
                 if (screen == Screen.PAUSED) { screen = Screen.PLAYING; resumeCountdown = 0f }
-                autopilot = false; forceMiss = true
+                autopilot = false; forceMiss = true; missOnce = false
+            }
+            "missonce" -> {
+                if (screen == Screen.PAUSED) { screen = Screen.PLAYING; resumeCountdown = 0f }
+                autopilot = false; forceMiss = true; missOnce = true
+            }
+            "auto" -> {
+                if (screen == Screen.PAUSED) { screen = Screen.PLAYING; resumeCountdown = 0f }
+                autopilot = true; forceMiss = false
+            }
+            "bonus" -> {
+                if (screen == Screen.PAUSED) { screen = Screen.PLAYING; resumeCountdown = 0f }
+                if (screen == Screen.PLAYING && world.started) world.spawnBonus(w * 0.5f)
             }
             "dump" -> for (s in Screen.values()) for (b in buttonsFor(s)) {
                 android.util.Log.i("BNUI", "$s ${b.action} ${b.rect.centerX().toInt()} ${b.rect.centerY().toInt()}")
@@ -616,7 +731,7 @@ class GameView(
         when (action) {
             Action.PLAY, Action.NEW_GAME -> startNewGame()
             Action.TOP3 -> screen = Screen.LEADERBOARD
-            Action.HOW_TO -> screen = Screen.HOW_TO
+            Action.HOW_TO -> { screen = Screen.HOW_TO; howScroll = 0f; howVel = 0f }
             Action.ABOUT -> screen = Screen.ABOUT
             Action.SOUND -> {
                 val on = !prefs.soundOn
@@ -632,8 +747,6 @@ class GameView(
             }
             Action.MAIN_MENU -> goToMenu()
             Action.EXIT -> activity.exitGame()
-            Action.EMAIL -> activity.openEmail()
-            Action.PHONE -> activity.openDialer()
             Action.PAUSE -> {
                 if (world.started && !world.over) screen = Screen.PAUSED
             }
@@ -670,12 +783,12 @@ class GameView(
                 if (screen == Screen.PLAYING && pressed == null) {
                     val i = e.actionIndex
                     activePointer = e.getPointerId(i)
-                    world.movePaddleTo(e.getX(i))
+                    world.movePaddleTo(e.getX(i), immediate = true)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
                 val i = e.findPointerIndex(activePointer)
-                if (i >= 0) onMove(e.getX(i))
+                if (i >= 0) onMove(e.getX(i), e.getY(i))
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 if (e.getPointerId(e.actionIndex) == activePointer && e.pointerCount > 1) {
@@ -708,19 +821,37 @@ class GameView(
                 return
             }
             pressed = null
-            world.movePaddleTo(x)
+            world.movePaddleTo(x, immediate = true)
             if (!world.started && resumeCountdown <= 0f) world.start()
+            return
+        }
+        if (screen == Screen.HOW_TO && howCard.contains(x, y)) {
+            howDragging = true
+            howVel = 0f
+            lastTouchY = y
+            pressed = null
             return
         }
         if (screen == Screen.GAME_OVER && !overButtonsEnabled()) return
         pressed = buttonsFor(screen).firstOrNull { hit(it, x, y) }
     }
 
-    private fun onMove(x: Float) {
-        if (screen == Screen.PLAYING && pressed == null) world.movePaddleTo(x)
+    private fun onMove(x: Float, y: Float) {
+        // The paddle sits exactly under the finger: no smoothing, no lag.
+        if (screen == Screen.PLAYING && pressed == null) world.movePaddleTo(x, immediate = true)
+        if (screen == Screen.HOW_TO && howDragging) {
+            val dy = y - lastTouchY
+            lastTouchY = y
+            howScroll = clampHowScroll(howScroll - dy)
+            howVel = -dy * 60f
+        }
     }
 
+    private fun clampHowScroll(v: Float): Float =
+        v.coerceIn(0f, max(0f, howContentH - (howCard.height() - u * 2f)))
+
     private fun onUp(x: Float, y: Float) {
+        if (howDragging) { howDragging = false; return }
         val b = pressed
         pressed = null
         if (b == null) return
@@ -932,21 +1063,120 @@ class GameView(
         renderTitle(c, "HOW TO PLAY", null, cCyan)
         drawPanel(c, howCard, cCyan, 1f)
         val lineH = howTextSize * 1.32f
-        var y = howCard.top + u * 6f + howTextSize
         val badgeR = u * 3.4f
-        for ((n, lines) in howLines) {
-            val bx = howCard.left + u * 8f
-            fillPaint.shader = null
-            fillPaint.color = if (n == 5) cPink else cPurple
-            c.drawCircle(bx, y - howTextSize * 0.35f, badgeR, fillPaint)
-            text(c, n.toString(), bx, y - howTextSize * 0.35f + badgeR * 0.42f, badgeR * 1.2f, cWhite, fontBold)
-            for (line in lines) {
-                text(c, line, howCard.left + u * 15f, y, howTextSize, if (n == 5) 0xFFFFB3CB.toInt() else cText, fontBody, Paint.Align.LEFT)
-                y += lineH
+        c.save()
+        c.clipRect(howCard.left + dp, howCard.top + dp * 2f, howCard.right - dp, howCard.bottom - dp * 2f)
+        c.translate(0f, howCard.top - howScroll)
+        drawHowDemo(c, howDemo)
+        text(c, "Slide to move  \u2022  Keep it bouncing  \u2022  Catch the heart",
+            cx, howDemo.bottom + u * 7f, u * 3.3f, cMuted, fontBody, maxWidth = howCard.width() - u * 8f)
+        val textX = howCard.left + u * 15f
+        val bx = howCard.left + u * 8f
+        for (row in howRows) {
+            when (row.kind) {
+                1 -> {
+                    val col = if (row.label == "BONUS LIFE") cPink else cCyan
+                    text(c, row.label, howCard.left + u * 6f, row.y, u * 5.4f, cText, fontTitle, Paint.Align.LEFT,
+                        glow = col, glowR = u * 1.6f, spacing = 0.06f)
+                    if (row.label == "BONUS LIFE") drawHeart(c, howCard.left + u * 6f + u * 37f, row.y - u * 1.8f, u * 2.4f, 1f, true)
+                    fillPaint.shader = null
+                    fillPaint.color = withAlpha(col, 0.5f)
+                    c.drawRect(howCard.left + u * 6f, row.y + u * 2.4f, howCard.right - u * 6f, row.y + u * 2.4f + dp, fillPaint)
+                }
+                0 -> {
+                    fillPaint.shader = null
+                    fillPaint.color = cPurple
+                    c.drawCircle(bx, row.y - howTextSize * 0.35f, badgeR, fillPaint)
+                    text(c, row.label, bx, row.y - howTextSize * 0.35f + badgeR * 0.42f, badgeR * 1.2f, cWhite, fontBold)
+                    var ly = row.y
+                    for (line in row.lines) {
+                        text(c, line, textX, ly, howTextSize, cText, fontBody, Paint.Align.LEFT); ly += lineH
+                    }
+                }
+                else -> {
+                    drawHeart(c, bx, row.y - howTextSize * 0.35f, u * 2.2f, 1f, false)
+                    var ly = row.y
+                    for (line in row.lines) {
+                        text(c, line, textX, ly, howTextSize, 0xFFFFD6E3.toInt(), fontBody, Paint.Align.LEFT); ly += lineH
+                    }
+                }
             }
-            y += u * 3.5f
+        }
+        c.restore()
+        // scroll bar + hint
+        val view = howCard.height() - u * 2f
+        if (howContentH > view) {
+            val track = howCard.height() - u * 12f
+            val thumb = max(u * 8f, track * view / howContentH)
+            val maxScroll = howContentH - view
+            val ty = howCard.top + u * 6f + (track - thumb) * (howScroll / maxScroll)
+            fillPaint.shader = null
+            fillPaint.color = withAlpha(cCyan, 0.55f)
+            c.drawRoundRect(howCard.right - u * 2.6f, ty, howCard.right - u * 1.4f, ty + thumb, u, u, fillPaint)
+            if (howScroll < maxScroll - u) {
+                val p = 0.55f + 0.45f * sin(time * 4f)
+                text(c, "SCROLL FOR MORE \u25BE", cx, howCard.bottom - u * 2.5f, u * 3f, withAlpha(cCyan, p), fontBold, spacing = 0.12f)
+            }
         }
         drawButton(c, btnBackHow)
+    }
+
+    /**
+     * Small looping illustration: the paddle slides (with a finger under it), the ball bounces on it
+     * and a bonus heart falls and is caught (+1).
+     */
+    private fun drawHowDemo(c: Canvas, r: RectF) {
+        val rad = u * 4f
+        fillPaint.shader = null
+        fillPaint.color = withAlpha(0xFF070A22.toInt(), 0.9f)
+        c.drawRoundRect(r, rad, rad, fillPaint)
+        strokePaint.strokeWidth = dp
+        strokePaint.color = withAlpha(cPurple, 0.5f)
+        c.drawRoundRect(r, rad, rad, strokePaint)
+
+        val cycle = 3.2f
+        val n = (time / cycle).toInt()
+        val p = (time % cycle) / cycle
+        val leftX = r.left + r.width() * 0.25f
+        val rightX = r.left + r.width() * 0.75f
+        val fromX = if (n % 2 == 0) leftX else rightX
+        val toX = if (n % 2 == 0) rightX else leftX
+        val moveP = (p / 0.8f).coerceIn(0f, 1f)
+        val ease = moveP * moveP * (3f - 2f * moveP)
+        val px = fromX + (toX - fromX) * ease
+        val padW = r.width() * 0.28f
+        val padH = u * 1.8f
+        val padY = r.bottom - u * 12f
+        // paddle
+        fillPaint.color = withAlpha(cPurple, 0.25f)
+        c.drawRoundRect(px - padW / 2f - u, padY - u, px + padW / 2f + u, padY + padH + u, padH, padH, fillPaint)
+        fillPaint.color = cCyan
+        c.drawRoundRect(px - padW / 2f, padY, px + padW / 2f, padY + padH, padH / 2f, padH / 2f, fillPaint)
+        // finger / thumb under the paddle with arrows
+        fillPaint.color = withAlpha(cWhite, 0.30f)
+        c.drawCircle(px, padY + u * 7f, u * 3f, fillPaint)
+        fillPaint.color = withAlpha(cWhite, 0.55f)
+        c.drawCircle(px, padY + u * 7f, u * 1.4f, fillPaint)
+        text(c, "\u2039        \u203A", px, padY + u * 8.6f, u * 5f, withAlpha(cCyan, 0.8f), fontBold)
+        // ball bouncing on the paddle
+        val br = u * 2.3f
+        val bounce = abs(sin(time * Math.PI.toFloat() / 0.55f))
+        val by = padY - br - bounce * (r.height() * 0.42f)
+        c.save(); c.translate(px, by)
+        fillPaint.color = withAlpha(cCyan, 0.25f); c.drawCircle(0f, 0f, br * 2f, fillPaint)
+        fillPaint.color = cWhite; c.drawCircle(0f, 0f, br, fillPaint)
+        fillPaint.color = withAlpha(cCyan, 0.8f); c.drawCircle(br * 0.15f, br * 0.15f, br * 0.75f, fillPaint)
+        c.restore()
+        // falling bonus heart, caught at the end of the slide
+        val hr = u * 2.6f
+        if (p < 0.8f) {
+            val hy = r.top + u * 5f + (padY - hr - (r.top + u * 5f)) * (p / 0.8f)
+            drawHeart(c, toX, hy, hr * (1f + 0.1f * sin(time * 8f)), 1f, true)
+        } else {
+            val q = (p - 0.8f) / 0.2f
+            text(c, "+1", toX, padY - u * 4f - q * u * 6f, u * 6f, withAlpha(cGold, 1f - q), fontTitle,
+                glow = withAlpha(cPink, 1f - q), glowR = u * 2f)
+        }
     }
 
     private fun renderLeaderboard(c: Canvas) {
@@ -1000,13 +1230,26 @@ class GameView(
         c.drawRect(cx - cw * 0.35f, y, cx + cw * 0.35f, y + dp, fillPaint)
         fillPaint.shader = null
 
-        drawButton(c, btnEmail)
-        drawButton(c, btnPhone)
-        val info = btnPhone.rect.bottom + u * 9f
-        text(c, "Tap email to write  •  Tap number to call", cx, btnPhone.rect.bottom + u * 5f, u * 3f, withAlpha(cMuted, 0.8f), fontBody)
+        drawInfoRow(c, emailRow, "EMAIL", Brand.EMAIL)
+        drawInfoRow(c, phoneRow, "MOBILE", Brand.PHONE)
+        val info = phoneRow.bottom + u * 6f
         text(c, "Version ${BuildConfig.VERSION_NAME}", cx, info + u * 2f, u * 3.8f, cText, fontBold, spacing = 0.08f)
         text(c, Brand.COPYRIGHT, cx, info + u * 8f, u * 3.2f, cMuted, fontBody, maxWidth = cw)
         drawButton(c, btnBackAbout)
+    }
+
+    /** Contact details shown as plain information - tapping does nothing. */
+    private fun drawInfoRow(c: Canvas, r: RectF, label: String, value: String) {
+        val lr = r.height() * 0.28f
+        fillPaint.shader = null
+        fillPaint.color = withAlpha(0xFF101640.toInt(), 0.95f)
+        c.drawRoundRect(r, lr, lr, fillPaint)
+        strokePaint.strokeWidth = dp * 1.2f
+        strokePaint.color = withAlpha(cBlue, 0.6f)
+        c.drawRoundRect(r, lr, lr, strokePaint)
+        val pad = r.height() * 0.32f
+        text(c, label, r.left + pad, r.top + r.height() * 0.38f, r.height() * 0.20f, cMuted, fontBold, Paint.Align.LEFT, spacing = 0.15f)
+        text(c, value, r.left + pad, r.top + r.height() * 0.76f, r.height() * 0.30f, cCyan, fontBold, Paint.Align.LEFT, maxWidth = r.width() - pad * 2f)
     }
 
     private val tmpPanelRect = RectF()
@@ -1022,7 +1265,13 @@ class GameView(
             drawTrail(c, 1f, 1f)
             drawBall(c, world.ballX, world.ballY, 1f, 1f)
         }
+        if (screen != Screen.GAME_OVER) drawBonuses(c)
         particles.draw(c, particlePaint)
+        if (lifeFlash > 0f) {
+            fillPaint.shader = null
+            fillPaint.color = withAlpha(cPink, 0.28f * lifeFlash)
+            c.drawRect(0f, 0f, w, h, fillPaint)
+        }
 
         // HUD
         val s = 1f + 0.3f * scorePop
@@ -1033,6 +1282,7 @@ class GameView(
         text(c, "BEST ${max(scoreBook.best(), world.score)}", u * 5f, top + u * 7f, u * 3.6f, cGold, fontBold, Paint.Align.LEFT, spacing = 0.1f)
         text(c, "LEVEL ${world.level}", u * 5f, top + u * 12.5f, u * 3.6f, cCyan, fontBold, Paint.Align.LEFT, spacing = 0.1f)
         text(c, "x" + String.format(Locale.US, "%.2f", world.speedMul), u * 5f, top + u * 18f, u * 3f, cMuted, fontBody, Paint.Align.LEFT)
+        drawLives(c)
 
         if (screen == Screen.PLAYING && world.started && !world.over) drawPauseIcon(c)
 
@@ -1040,21 +1290,91 @@ class GameView(
             val p = 0.6f + 0.4f * (0.5f + 0.5f * sin(time * 4f))
             text(c, "TOUCH TO START", cx, h * 0.52f, u * 7f, withAlpha(cText, p), fontTitle, glow = cPurple, glowR = u * 2f, maxWidth = cw)
             text(c, "Slide your finger to move the paddle", cx, h * 0.52f + u * 8f, u * 3.8f, cMuted, fontBody, maxWidth = cw)
-            text(c, "ONE LIFE ONLY – DON'T MISS!", cx, h * 0.52f + u * 15f, u * 3.8f, cPink, fontBold, spacing = 0.1f, maxWidth = cw)
+            text(c, "BONUS LIFE EVERY 10 HITS \u2013 CATCH THE HEART!", cx, h * 0.52f + u * 15f, u * 3.8f, cPink, fontBold, spacing = 0.06f, maxWidth = cw)
         }
         if (toastT > 0f && screen == Screen.PLAYING) {
             val a = min(1f, toastT / 0.4f)
             val sc = 1f + 0.15f * (1f - min(1f, (1.6f - toastT) / 0.25f))
             c.save()
             c.scale(sc, sc, cx, h * 0.36f)
-            text(c, toastText, cx, h * 0.36f, u * 6.5f, withAlpha(cWhite, a), fontTitle, glow = withAlpha(cPurple, a), glowR = u * 3f, maxWidth = cw)
+            if (toastText.isNotEmpty()) text(c, toastText, cx, h * 0.36f, u * 6.5f, withAlpha(cWhite, a), fontTitle, glow = withAlpha(cPurple, a), glowR = u * 3f, maxWidth = cw)
             c.restore()
+            if (toastSub.isNotEmpty()) text(c, toastSub, cx, h * 0.36f + u * 7f, u * 3.8f, withAlpha(0xFFFFB3CB.toInt(), a), fontBold, glow = withAlpha(cPink, a), glowR = u * 1.5f, maxWidth = cw)
+        }
+        if (bonusMsgT > 0f && screen == Screen.PLAYING) {
+            val a = min(1f, bonusMsgT / 0.5f)
+            val rise = (1.8f - bonusMsgT) * u * 6f
+            val sc = 1f + 0.25f * max(0f, 1f - (1.8f - bonusMsgT) / 0.3f)
+            c.save()
+            c.scale(sc, sc, cx, h * 0.46f - rise)
+            text(c, "BONUS LIFE +1", cx, h * 0.46f - rise, u * 8f, withAlpha(cGold, a), fontTitle, glow = withAlpha(cPink, a), glowR = u * 3f, maxWidth = cw)
+            c.restore()
+        }
+        if (screen == Screen.PLAYING && world.relaunchTimer > 0f) {
+            val left = world.lives
+            text(c, "LIFE LOST", cx, h * 0.50f, u * 8f, cPink, fontTitle, glow = cPink, glowR = u * 3f, maxWidth = cw)
+            text(c, if (left == 1) "1 LIFE LEFT \u2013 GET READY" else "$left LIVES LEFT \u2013 GET READY", cx, h * 0.50f + u * 8f, u * 4.2f, cText, fontBold, spacing = 0.1f, maxWidth = cw)
         }
         if (resumeCountdown > 0f && screen == Screen.PLAYING) {
             val n = ceil(resumeCountdown).toInt()
             val frac = resumeCountdown - (n - 1)
             text(c, n.toString(), cx, h * 0.48f, u * (22f + 10f * frac), withAlpha(cWhite, frac.coerceIn(0.3f, 1f)), fontTitle, glow = cCyan, glowR = u * 4f)
             text(c, "GET READY", cx, h * 0.48f + u * 10f, u * 4.5f, cCyan, fontBold, spacing = 0.3f)
+        }
+    }
+
+    private fun drawHeart(c: Canvas, x: Float, y: Float, r: Float, alpha: Float, glow: Boolean) {
+        c.save()
+        c.translate(x, y)
+        c.scale(r, r)
+        if (glow) {
+            heartGlowPaint.alpha = (alpha * 255).toInt()
+            c.drawCircle(0f, 0f, 2.6f, heartGlowPaint)
+        }
+        heartPaint.alpha = (alpha * 255).toInt()
+        c.drawPath(heartPath, heartPaint)
+        c.restore()
+    }
+
+    /** Falling bonus-life hearts: glow, pulse, orbiting sparkles and a "+1" tag. */
+    private fun drawBonuses(c: Canvas) {
+        val br = world.bonusR
+        for (b in world.bonuses) {
+            val pulse = 1f + 0.12f * sin(b.age * 7f)
+            // falling streak
+            fillPaint.shader = null
+            for (k in 1..5) {
+                fillPaint.color = withAlpha(cPink, 0.10f * (6 - k) / 5f)
+                c.drawCircle(b.x, b.y - k * br * 0.55f, br * (0.75f - k * 0.1f), fillPaint)
+            }
+            drawHeart(c, b.x, b.y, br * pulse, 1f, true)
+            for (k in 0 until 6) {
+                val a = b.age * 2.4f + k * 1.047f
+                fillPaint.color = withAlpha(if (k % 2 == 0) cGold else cWhite, 0.85f)
+                c.drawCircle(b.x + cos(a) * br * 1.9f, b.y + sin(a) * br * 1.9f, br * 0.12f, fillPaint)
+            }
+            text(c, "+1", b.x + br * 1.6f, b.y - br * 1.2f, br * 0.9f, cGold, fontTitle, Paint.Align.LEFT, glow = cPink, glowR = br * 0.4f)
+        }
+    }
+
+    /** Life indicator under the score: one heart per remaining life. */
+    private fun drawLives(c: Canvas) {
+        val n = world.lives
+        if (n <= 0) return
+        val hr = u * 2.6f
+        val y = top + u * 24f
+        val pop = 1f + 0.35f * livesPop
+        if (n <= 6) {
+            val gap = hr * 2.7f
+            var x = cx - (n - 1) * gap / 2f
+            for (i in 0 until n) {
+                val sc = if (i == n - 1) pop else 1f
+                drawHeart(c, x, y, hr * sc, 1f, i == n - 1 && livesPop > 0f)
+                x += gap
+            }
+        } else {
+            drawHeart(c, cx - hr * 1.6f, y, hr * pop, 1f, livesPop > 0f)
+            text(c, "x $n", cx - hr * 0.2f, y + hr * 0.6f, hr * 1.7f, cText, fontTitle, Paint.Align.LEFT)
         }
     }
 
@@ -1079,7 +1399,7 @@ class GameView(
         drawPanel(c, panelRect, cCyan, 1f)
         text(c, "PAUSED", cx, panelRect.top + u * 17f, u * 11f, cText, fontTitle, glow = cCyan, glowR = u * 2.5f)
         text(c, "SCORE  ${world.score}", cx, panelRect.top + u * 28f, u * 5f, cGold, fontBold, spacing = 0.1f)
-        text(c, "One life – no extra chances.", cx, panelRect.top + u * 37f, u * 3.6f, cMuted, fontBody)
+        text(c, "LIVES  ${world.lives}", cx, panelRect.top + u * 36f, u * 4.2f, cPink, fontBold, spacing = 0.1f)
         text(c, "A 3-second countdown follows Resume.", cx, panelRect.top + u * 42.5f, u * 3.6f, cMuted, fontBody)
         for (b in pauseButtons) drawButton(c, b)
     }

@@ -21,11 +21,18 @@ coords() { # $1 = screen, $2 = action  -> "x y"
 adb shell am start -W -n "$ACT" >/dev/null; sleep 5
 shot 01-menu
 cmd howto; shot 02-howto
+read -r SW SH <<< "$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | tr 'x' ' ')"
+adb shell input swipe $((SW/2)) $((SH*70/100)) $((SW/2)) $((SH*30/100)) 300; sleep 1.5; shot 02b-howto-scrolled
+adb shell input swipe $((SW/2)) $((SH*70/100)) $((SW/2)) $((SH*25/100)) 300; sleep 1.5; shot 02c-howto-bottom
 cmd top3;  shot 03-top3-empty
 cmd about; shot 04-about
 cmd autoplay 1; shot 05-game-start
 sleep 8;  shot 06-playing
 cmd pause; shot 07-paused
+cmd bonus 1.5; shot 07b-bonus-falling
+sleep 3.5; shot 07c-after-bonus-catch
+cmd missonce 0.6; shot 07d-life-lost-1; sleep 0.6; shot 07e-life-lost-2; sleep 0.6; shot 07f-life-lost-3
+sleep 4; shot 07g-playing-after-relaunch
 cmd miss 4; shot 08-gameover-new-high-score
 cmd autoplay 3; cmd miss 4; shot 09-gameover-second
 cmd autoplay 2; cmd miss 4; shot 10-gameover-third

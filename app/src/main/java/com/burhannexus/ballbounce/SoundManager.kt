@@ -7,7 +7,7 @@ import android.media.SoundPool
 /** Short sound effects played through SoundPool. All sounds are generated offline and bundled. */
 class SoundManager(context: Context, var enabled: Boolean) {
 
-    enum class Sfx { BOUNCE, WALL, CLICK, GAME_OVER, HIGH_SCORE }
+    enum class Sfx { BOUNCE, WALL, CLICK, GAME_OVER, HIGH_SCORE, BONUS, LIFE_LOST }
 
     private val pool: SoundPool = SoundPool.Builder()
         .setMaxStreams(4)
@@ -23,6 +23,8 @@ class SoundManager(context: Context, var enabled: Boolean) {
     private val click = pool.load(context, R.raw.sfx_click, 1)
     private val gameOver = pool.load(context, R.raw.sfx_gameover, 1)
     private val highScore = pool.load(context, R.raw.sfx_highscore, 1)
+    private val bonus = pool.load(context, R.raw.sfx_bonus, 1)
+    private val lifeLost = pool.load(context, R.raw.sfx_lifelost, 1)
 
     fun play(sfx: Sfx) {
         if (!enabled) return
@@ -32,6 +34,8 @@ class SoundManager(context: Context, var enabled: Boolean) {
             Sfx.CLICK -> pool.play(click, 0.8f, 0.8f, 1, 0, 1f)
             Sfx.GAME_OVER -> pool.play(gameOver, 1f, 1f, 2, 0, 1f)
             Sfx.HIGH_SCORE -> pool.play(highScore, 1f, 1f, 2, 0, 1f)
+            Sfx.BONUS -> pool.play(bonus, 1f, 1f, 2, 0, 1f)
+            Sfx.LIFE_LOST -> pool.play(lifeLost, 0.9f, 0.9f, 2, 0, 1f)
         }
     }
 

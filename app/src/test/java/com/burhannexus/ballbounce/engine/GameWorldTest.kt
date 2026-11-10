@@ -45,7 +45,7 @@ class GameWorldTest {
     }
 
     @Test
-    fun singleMissEndsGameImmediately() {
+    fun missWithNoExtraLifeEndsGame() {
         val w = world()
         w.start()
         var gameOverEvents = 0
@@ -178,5 +178,162 @@ class GameWorldTest {
             assertFalse(w.over)
             assertTrue(w.score > 20)
         }
+    }
+
+    // ------------------------------------------------------------ v1.1 lives + bonus life
+
+    private fun run(w: GameWorld, seconds: Float, dt: Float = 1f / 60f, each: (List<GameEvent>) -> Unit = {}) {
+        var t = 0f
+        while (t < seconds) { each(w.update(dt)); t += dt }
+    }
+
+    @Test
+    fun paddleFollowsFingerInstantly() {
+        val w = world()
+        w.movePaddleTo(w.width * 0.9f)
+        assertEquals(w.width * 0.9f, w.paddleX, 0.01f)       // same frame, no lag
+        w.movePaddleTo(0f)
+        assertEquals(w.paddleW / 2f, w.paddleX, 0.01f)       // clamped to the left edge
+        w.movePaddleTo(w.width * 5f)
+        assertEquals(w.width - w.paddleW / 2f, w.paddleX, 0.01f)
+        w.update(1f / 60f)
+        assertEquals(w.width - w.paddleW / 2f, w.paddleX, 0.01f)
+    }
+
+    @Test
+    fun bonusHeartSpawnsEveryTenHits() {
+        val w = world(21)
+        w.start()
+        var spawns = 0
+        var t = 0f
+        while (w.score < 30 && t < 200f) {
+            w.movePaddleTo(w.ballX)
+            spawns += w.update(1f / 120f).count { it.type == EventType.BONUS_SPAWNED }
+            t += 1f / 120f
+        }
+        assertEquals(30, w.score)
+        assertEquals(3, spawns)
+    }
+
+    @Test
+    fun bonusFallsSlowlyAndIsOnlyAwardedWhenTouchingPaddle() {
+        val w = world()
+        w.movePaddleTo(w.width / 2f)
+        w.spawnBonus(w.width / 2f)
+        val startY = w.bonuses[0].y
+        run(w, 2f)
+        assertEquals("not awarded while still falling", 1, w.lives)
+        assertTrue(w.bonuses[0].y > startY)
+        var collected = 0
+        run(w, 4f) { ev -> collected += ev.count { it.type == EventType.BONUS_COLLECTED } }
+        assertEquals(1, collected)
+        assertEquals(2, w.lives)
+        assertTrue(w.bonuses.isEmpty())
+    }
+
+    @Test
+    fun missedBonusDisappearsAndCostsNothing() {
+        val w = world()
+        w.movePaddleTo(w.width)            // paddle far right
+        w.spawnBonus(w.width * 0.1f)       // heart far left
+        var missed = 0
+        run(w, 7f) { ev -> missed += ev.count { it.type == EventType.BONUS_MISSED } }
+        assertEquals(1, missed)
+        assertTrue(w.bonuses.isEmpty())
+        assertEquals(1, w.lives)
+        assertFalse(w.over)
+    }
+
+    @Test
+    fun losingALifeKeepsScoreAndDifficultyAndDropsANewBall() {
+        val w = world(9)
+        // collect two hearts before starting -> 3 lives
+        w.movePaddleTo(w.width / 2f)
+        w.spawnBonus(w.width / 2f); w.spawnBonus(w.width / 2f)
+        run(w, 6f)
+        assertEquals(3, w.lives)
+
+        w.start()
+        var t = 0f
+        while (w.score < 14 && t < 120f) {
+            w.movePaddleTo(w.ballX)
+            w.update(1f / 120f); t += 1f / 120f
+        }
+        assertEquals(14, w.score)
+        w.bonuses.clear()
+        val livesBefore = w.lives
+        val speedBefore = w.speedMul
+        val levelBefore = w.level
+
+        // miss on purpose
+        var lost = 0
+        t = 0f
+        while (lost == 0 && t < 10f) {
+            w.movePaddleTo(if (w.ballX < w.width / 2f) w.width else 0f)
+            lost += w.update(1f / 60f).count { it.type == EventType.LIFE_LOST }
+            t += 1f / 60f
+        }
+        assertEquals(1, lost)
+        assertEquals(livesBefore - 1, w.lives)
+        assertFalse(w.over)
+        assertEquals(14, w.score)
+        assertEquals(levelBefore, w.level)
+        assertTrue(w.speedMul >= speedBefore * 0.99f)
+        assertTrue(w.relaunchTimer > 0f)
+
+        // replacement ball waits at the top, then drops
+        val elapsedAtLoss = w.elapsed
+        var relaunched = 0
+        run(w, GameWorld.RELAUNCH_DELAY + 0.1f) { ev -> relaunched += ev.count { it.type == EventType.BALL_RELAUNCHED } }
+        assertEquals(1, relaunched)
+        assertTrue(w.ballY < w.height * 0.4f)
+        assertTrue(w.elapsed - elapsedAtLoss < 0.2f)
+
+        // play on: the score keeps growing from 14
+        t = 0f
+        while (w.score < 16 && t < 20f) {
+            w.movePaddleTo(w.ballX)
+            w.update(1f / 120f); t += 1f / 120f
+        }
+        assertEquals(16, w.score)
+    }
+
+    @Test
+    fun gameOverOnlyWhenAllLivesAreUsed() {
+        val w = world(4)
+        w.movePaddleTo(w.width / 2f)
+        w.spawnBonus(w.width / 2f)
+        run(w, 6f)
+        assertEquals(2, w.lives)
+        w.start()
+        var lifeLost = 0
+        var gameOver = 0
+        var t = 0f
+        while (!w.over && t < 30f) {
+            w.movePaddleTo(if (w.ballX < w.width / 2f) w.width else 0f)
+            for (e in w.update(1f / 60f)) {
+                if (e.type == EventType.LIFE_LOST) lifeLost++
+                if (e.type == EventType.GAME_OVER) gameOver++
+            }
+            t += 1f / 60f
+        }
+        assertTrue(w.over)
+        assertEquals(1, lifeLost)
+        assertEquals(1, gameOver)
+        assertEquals(0, w.lives)
+    }
+
+    @Test
+    fun newGameResetsLivesAndBonuses() {
+        val w = world()
+        w.movePaddleTo(w.width / 2f)
+        w.spawnBonus(w.width / 2f)
+        run(w, 6f)
+        w.spawnBonus()
+        assertEquals(2, w.lives)
+        w.reset()
+        assertEquals(1, w.lives)
+        assertTrue(w.bonuses.isEmpty())
+        assertEquals(0f, w.relaunchTimer, 0f)
     }
 }

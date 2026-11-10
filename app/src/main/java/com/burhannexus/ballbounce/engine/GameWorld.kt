@@ -11,7 +11,16 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /** Things that happened during one [GameWorld.update] call, used for sounds and effects. */
-enum class EventType { PADDLE_HIT, WALL_HIT, LEVEL_UP, GAME_OVER }
+enum class EventType {
+    PADDLE_HIT, WALL_HIT, LEVEL_UP,
+    BONUS_SPAWNED, BONUS_COLLECTED, BONUS_MISSED,
+    LIFE_LOST, BALL_RELAUNCHED, GAME_OVER
+}
+
+/** A falling bonus-life heart. Only collected when it touches the paddle. */
+class Bonus(var x: Float, var y: Float, val vy: Float) {
+    var age = 0f
+}
 
 class GameEvent(val type: EventType, val x: Float, val y: Float)
 
@@ -84,6 +93,14 @@ class GameWorld(private val random: Random = Random.Default) {
     var started = false; private set
     var over = false; private set
 
+    /** Lives remaining including the ball in play. Starts at 1; +1 for every collected bonus heart. */
+    var lives = 1; private set
+    /** Seconds until a replacement ball is dropped after a lost life (0 = ball in play). */
+    var relaunchTimer = 0f; private set
+    val bonuses = ArrayList<Bonus>()
+    var bonusR = 1f; private set
+    private var bonusFallSpeed = 1f
+
     private var gravity = 1f
     private var launchSpeed = 1f
     private var startY = 0f
@@ -110,17 +127,24 @@ class GameWorld(private val random: Random = Random.Default) {
         gravity = 2f * rise / (apexTime * apexTime)
         launchSpeed = 2f * rise / apexTime
         startY = ceiling + h * 0.22f
+        bonusR = ballR * 1.25f
+        // Bonus hearts fall slowly: about 4.5 seconds from the top to the paddle (real time).
+        bonusFallSpeed = max(h * 0.1f, paddleY - (ceiling + h * 0.06f)) / BONUS_FALL_SECONDS
 
         if (!started) {
             reset()
         } else if (oldW > 1f) {
             val k = w / oldW
             ballX *= k; paddleX *= k; targetPaddleX *= k
+            for (b in bonuses) b.x *= k
         }
     }
 
-    /** Completely fresh session: score 0, initial speed, ball back at the start. One life. */
+    /** Completely fresh session: score 0, initial speed, ball back at the start, 1 life, no bonuses. */
     fun reset() {
+        lives = 1
+        relaunchTimer = 0f
+        bonuses.clear()
         score = 0
         level = 1
         elapsed = 0f
@@ -142,12 +166,52 @@ class GameWorld(private val random: Random = Random.Default) {
     fun start() {
         if (started || over) return
         started = true
+        dropBall()
+    }
+
+    private fun dropBall() {
+        ballX = width / 2f
         ballY = startY
         ballVY = 0f
         ballVX = (random.nextFloat() * 2f - 1f) * height * 0.06f
     }
 
-    fun movePaddleTo(x: Float, immediate: Boolean = false) {
+    /** Creates a falling bonus heart near the top of the screen. */
+    fun spawnBonus(x: Float = width * (0.15f + random.nextFloat() * 0.7f)) {
+        val b = Bonus(x.coerceIn(bonusR, width - bonusR), ceiling + height * 0.06f, bonusFallSpeed)
+        bonuses.add(b)
+        events.add(GameEvent(EventType.BONUS_SPAWNED, b.x, b.y))
+    }
+
+    private fun updateBonuses(dt: Float) {
+        if (bonuses.isEmpty()) return
+        val half = paddleW / 2f
+        val it = bonuses.iterator()
+        while (it.hasNext()) {
+            val b = it.next()
+            val prevY = b.y
+            b.age += dt
+            b.y += b.vy * dt
+            // collected only when the heart actually touches the paddle
+            val touchesTop = b.y + bonusR >= paddleY && prevY - bonusR <= paddleY + paddleH
+            if (touchesTop && abs(b.x - paddleX) <= half + bonusR * 0.8f) {
+                lives++
+                events.add(GameEvent(EventType.BONUS_COLLECTED, b.x, paddleY))
+                it.remove()
+                continue
+            }
+            if (b.y - bonusR > height) {
+                events.add(GameEvent(EventType.BONUS_MISSED, b.x, height))
+                it.remove()
+            }
+        }
+    }
+
+    /**
+     * Moves the paddle. Touch input uses immediate = true so the paddle sits exactly under the finger
+     * with no lag; the non-immediate path (very fast smoothing) is only a fallback.
+     */
+    fun movePaddleTo(x: Float, immediate: Boolean = true) {
         targetPaddleX = x
         if (immediate) paddleX = clampPaddle(x)
     }
@@ -161,14 +225,29 @@ class GameWorld(private val random: Random = Random.Default) {
         events.clear()
         val dt = dtRaw.coerceIn(0f, 0.05f)
 
-        // Paddle follows the finger smoothly but quickly
-        val k = 1f - exp(-30f * dt)
+        // Fallback smoothing for non-immediate moves (touch input is immediate)
+        val k = 1f - exp(-60f * dt)
         paddleX = clampPaddle(paddleX + (clampPaddle(targetPaddleX) - paddleX) * k)
 
+        if (over) return events
+        updateBonuses(dt)
         if (over) return events
         if (!started) {
             idleTime += dt
             ballY = startY + sin(idleTime * 3f) * ballR * 0.6f
+            return events
+        }
+
+        if (relaunchTimer > 0f) {
+            // Replacement ball hovers at the top while the player gets ready. Score and difficulty are kept.
+            relaunchTimer -= dt
+            idleTime += dt
+            ballY = startY + sin(idleTime * 3f) * ballR * 0.6f
+            if (relaunchTimer <= 0f) {
+                relaunchTimer = 0f
+                dropBall()
+                events.add(GameEvent(EventType.BALL_RELAUNCHED, ballX, ballY))
+            }
             return events
         }
 
@@ -183,7 +262,7 @@ class GameWorld(private val random: Random = Random.Default) {
         val steps = max(1, ceil(sim / STEP).toInt())
         val h = sim / steps
         for (i in 0 until steps) {
-            if (over) break
+            if (over || relaunchTimer > 0f) break
             step(h)
         }
         return events
@@ -226,13 +305,27 @@ class GameWorld(private val random: Random = Random.Default) {
                     level = newLevel
                     events.add(GameEvent(EventType.LEVEL_UP, ballX, ballY))
                 }
+                if (score % BONUS_EVERY == 0) spawnBonus()
             }
         }
 
-        // One life: the moment the ball leaves the bottom of the screen the game is over.
+        // Ball left the bottom of the screen: one life is used. Game over only when none are left.
         if (ballY - ballR > height) {
-            over = true
-            events.add(GameEvent(EventType.GAME_OVER, ballX, height))
+            val missX = ballX
+            lives--
+            if (lives <= 0) {
+                lives = 0
+                over = true
+                events.add(GameEvent(EventType.GAME_OVER, missX, height))
+            } else {
+                events.add(GameEvent(EventType.LIFE_LOST, missX, height))
+                relaunchTimer = RELAUNCH_DELAY
+                idleTime = 0f
+                ballX = width / 2f
+                ballY = startY
+                ballVX = 0f
+                ballVY = 0f
+            }
         }
     }
 
@@ -242,5 +335,10 @@ class GameWorld(private val random: Random = Random.Default) {
     companion object {
         /** Fixed physics sub-step (seconds of game time) - prevents tunnelling through the paddle. */
         const val STEP = 1f / 240f
+        /** A bonus heart appears after every 10 paddle hits. */
+        const val BONUS_EVERY = 10
+        const val BONUS_FALL_SECONDS = 4.5f
+        /** Pause before a replacement ball drops after a lost life. */
+        const val RELAUNCH_DELAY = 1.4f
     }
 }

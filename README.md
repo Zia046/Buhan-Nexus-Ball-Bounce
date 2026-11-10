@@ -1,13 +1,13 @@
 # BURHAN NEXUS – BALL BOUNCE
 
 A fast, neon-styled 2D arcade game for Android by **Burhan Nexus**.
-Keep the ball bouncing with your paddle. One life. No second chances.
+Keep the ball bouncing with your paddle, catch bonus hearts for extra lives.
 
 ![App icon](branding/app-icon-512.png)
 
 | | |
 |---|---|
-| Version | 1.0.0 (versionCode 1) |
+| Version | 1.1.0 (versionCode 2) |
 | Package | `com.burhannexus.ballbounce` |
 | Android | 8.0+ (minSdk 26), target SDK 35, designed for Android 10 and newer |
 | Orientation | Portrait |
@@ -18,36 +18,41 @@ Keep the ball bouncing with your paddle. One life. No second chances.
 ## Features
 
 - **Gameplay** – the ball falls under gravity; slide your finger anywhere to move the paddle. Each paddle hit = +1.
+- **Instant paddle** – the paddle sits exactly under your finger (no smoothing, no lag), so quick thumb flicks move it edge to edge at once.
 - **Angle physics** – centre hits bounce straight up, edge hits bounce at sharp angles (up to ~55°).
   Fixed 240 Hz physics sub-steps stop the ball from ever passing through the paddle.
 - **Difficulty** – speed grows in small steps with **time survived** (+2% every 6 s) and **every 10 hits** (+7%),
   capped at 1.85× so it stays playable. The paddle shrinks slightly every 10 hits (minimum 68%).
   “SPEED UP! LEVEL n” shows on each level.
-- **One life** – a single miss ends the game immediately. No continues.
+- **Lives + bonus life** – you start with 1 life. Every 10 hits a glowing heart falls slowly from the top;
+  catch it with the paddle for +1 life (“BONUS LIFE +1”). A missed heart just disappears.
+  Missing the ball uses one life: a new ball drops from the top after a short pause, score and speed are kept.
+  GAME OVER only when no lives are left. Hearts at the top show your lives.
 - **Scores** – personal best + TOP 3 leaderboard (gold / silver / bronze), saved on the device with
   SharedPreferences (`commit()`), so they survive closing, restarting and rebooting.
-- **Game over** – final score, personal best, NEW HIGH SCORE animation with confetti, TOP 3 achievement,
+- **Game over** (all lives used) – final score, personal best, NEW HIGH SCORE animation with confetti, TOP 3 achievement,
   plus **NEW GAME**, **MAIN MENU** and **EXIT GAME** buttons (buttons are locked for 0.8 s to prevent accidental taps).
 - **Pause** – pause button / back key / leaving the app pauses; resume gives a 3-2-1 countdown.
 - **Menu** – Burhan Nexus logo, PLAY, TOP 3 HIGH SCORES, HOW TO PLAY, ABOUT, SOUND ON/OFF, animated background ball.
-- **About** – original Burhan Nexus logo (unmodified), clickable email (opens the mail app) and
-  mobile number (opens the dialer – the user must press Call), version and copyright.
-- **Sounds** – bounce, game over, button click, high-score fanfare (all generated, royalty free). ON/OFF is remembered.
+- **How to Play** – scrollable instructions (basics + bonus life) with a small animated demo.
+- **About** – original Burhan Nexus logo (unmodified), email and mobile number (display only), version and copyright.
+- **Sounds** – bounce, bonus life, life lost, game over, button click, high-score fanfare (all generated, royalty free). ON/OFF is remembered.
 
 ## Download
 
 Every push to `main` builds the APKs in **GitHub Actions** and puts them on the
 [`apk-builds`](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/tree/apk-builds) branch:
 
-- [BurhanNexus-BallBounce-v1.0.0-release.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.0.0-release.apk) – install this one.
-- [BurhanNexus-BallBounce-v1.0.0-debug.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.0.0-debug.apk) – testing build, installs side by side as “Ball Bounce (Debug)”.
+- [BurhanNexus-BallBounce-v1.1.0-release.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.1.0-release.apk) – install this one.
+- [BurhanNexus-BallBounce-v1.1.0-debug.apk](https://github.com/Zia046/Buhan-Nexus-Ball-Bounce/raw/apk-builds/BurhanNexus-BallBounce-v1.1.0-debug.apk) – testing build, installs side by side as “Ball Bounce (Debug)”.
 
 Publishing a GitHub Release (e.g. tag `v1.0.0`) also attaches both APKs to the release automatically.
 
 ## Automated checks
 
-- **Unit tests** (18): physics, paddle angles, no tunnelling at max speed, difficulty steps and cap,
-  one-life game over, fresh NEW GAME, TOP 3 sorting/ties/persistence.
+- **Unit tests** (25): physics, paddle angles, instant paddle, no tunnelling at max speed, difficulty steps and cap,
+  bonus hearts every 10 hits / only when caught / missed heart costs nothing, life loss keeps score and speed,
+  game over only with no lives, fresh NEW GAME, TOP 3 sorting/ties/persistence.
 - **Emulator UI check** on Android 10 and Android 15: opens every screen, plays, forces a miss,
   restarts the app to confirm saved scores, taps PLAY and EXIT GAME with real touches, fails on any crash.
   Screenshots are pushed to the `ci-screenshots-api29` / `ci-screenshots-api35` branches.

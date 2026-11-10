@@ -1,16 +1,13 @@
 package com.burhannexus.ballbounce
 
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.widget.Toast
 
 class MainActivity : Activity() {
 
@@ -81,28 +78,6 @@ class MainActivity : Activity() {
     fun exitGame() {
         gameView.onHostPause()
         finishAndRemoveTask()
-    }
-
-    fun openEmail() {
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + Brand.EMAIL)).apply {
-            putExtra(Intent.EXTRA_SUBJECT, "Ball Bounce")
-        }
-        launch(intent, "No email app found")
-    }
-
-    /** Opens the phone dialer with the number filled in. The user must press Call to confirm. */
-    fun openDialer() {
-        launch(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Brand.PHONE)), "No phone app found")
-    }
-
-    private fun launch(intent: Intent, failMessage: String) {
-        try {
-            startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
-            Toast.makeText(this, failMessage, Toast.LENGTH_SHORT).show()
-        } catch (e: SecurityException) {
-            Toast.makeText(this, failMessage, Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun hideSystemBars() {

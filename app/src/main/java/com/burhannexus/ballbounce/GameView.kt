@@ -1114,6 +1114,12 @@ class GameView(
             fillPaint.color = withAlpha(cCyan, 0.55f)
             c.drawRoundRect(howCard.right - u * 2.6f, ty, howCard.right - u * 1.4f, ty + thumb, u, u, fillPaint)
             if (howScroll < maxScroll - u) {
+                // fade the text out behind the hint so they never overlap
+                val fadeTop = howCard.bottom - u * 11f
+                fillPaint.shader = LinearGradient(0f, fadeTop, 0f, howCard.bottom - u * 1.5f,
+                    0x000C1133, 0xF50C1133.toInt(), Shader.TileMode.CLAMP)
+                c.drawRect(howCard.left + dp * 2f, fadeTop, howCard.right - u * 3f, howCard.bottom - dp * 2f, fillPaint)
+                fillPaint.shader = null
                 val p = 0.55f + 0.45f * sin(time * 4f)
                 text(c, "SCROLL FOR MORE \u25BE", cx, howCard.bottom - u * 2.5f, u * 3f, withAlpha(cCyan, p), fontBold, spacing = 0.12f)
             }

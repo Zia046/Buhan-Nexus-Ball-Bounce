@@ -1,0 +1,3 @@
+PLAY at 540 1184
+EXIT at 540 1701
+EXIT: OK (home screen)
